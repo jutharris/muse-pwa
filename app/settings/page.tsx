@@ -2,33 +2,31 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { getSettings, saveSettings } from "@/lib/db";
-import type { AppSettings } from "@/lib/types";
+import { getSettings, db } from "@/lib/db";
+import { useLiveQuery } from "dexie-react-hooks";
 
 export default function SettingsPage() {
-  const [form, setForm] = useState<Partial<AppSettings>>({});
-  const [saved, setSaved] = useState(false);
-  const [loading, setLoading] = useState(true);
+  const [deviceId, setDeviceId] = useState("—");
+  const [supabaseConfigured, setSupabaseConfigured] = useState(false);
 
   useEffect(() => {
     getSettings().then((s) => {
-      setForm(s);
-      setLoading(false);
+      setDeviceId(s.deviceId);
     });
+    setSupabaseConfigured(
+      !!(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY)
+    );
   }, []);
 
-  const set = (patch: Partial<AppSettings>) => {
-    setSaved(false);
-    setForm((f) => ({ ...f, ...patch }));
-  };
-
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    await saveSettings(form as AppSettings);
-    setSaved(true);
-  };
-
-  if (loading) return <main className="mx-auto max-w-xl px-4 pt-6 text-ink-400 text-sm">Loading…</main>;
+  const counts = useLiveQuery(async () => {
+    const all = await db().entries.toArray();
+    return {
+      total: all.length,
+      synced: all.filter((e) => e.sync_status === "synced").length,
+      pending: all.filter((e) => e.sync_status === "pending").length,
+      failed: all.filter((e) => e.sync_status === "failed").length,
+    };
+  }, []);
 
   return (
     <main className="mx-auto max-w-xl px-4 pt-6 pb-24">
@@ -37,97 +35,46 @@ export default function SettingsPage() {
         <h1 className="text-xl font-semibold">Settings</h1>
       </div>
 
-      <form onSubmit={submit} className="space-y-6">
-        <Section title="Anthropic API" description="Used server-side for Claude processing. If you set ANTHROPIC_API_KEY in your deployment environment you can leave this blank.">
-          <Field
-            label="API Key"
-            type="password"
-            placeholder="sk-ant-…"
-            value={form.anthropicApiKey ?? ""}
-            onChange={(v) => set({ anthropicApiKey: v })}
-            autoComplete="off"
-          />
-        </Section>
-
-        <Section title="Supabase Sync" description="Optional. Connect Supabase to sync your ideas across devices. Entries sync automatically when online.">
-          <Field
-            label="Project URL"
-            type="url"
-            placeholder="https://xxxx.supabase.co"
-            value={form.supabaseUrl ?? ""}
-            onChange={(v) => set({ supabaseUrl: v })}
-          />
-          <Field
-            label="Anon/Public Key"
-            type="password"
-            placeholder="ey…"
-            value={form.supabaseAnonKey ?? ""}
-            onChange={(v) => set({ supabaseAnonKey: v })}
-            autoComplete="off"
-          />
-          <label className="flex items-center gap-3 cursor-pointer mt-2">
-            <input
-              type="checkbox"
-              checked={form.syncEnabled ?? true}
-              onChange={(e) => set({ syncEnabled: e.target.checked })}
-              className="h-4 w-4 rounded border-ink-600 bg-ink-800 accent-accent"
-            />
-            <span className="text-sm text-ink-200">Enable cloud sync</span>
-          </label>
-        </Section>
-
-        <div className="flex items-center gap-4">
-          <button
-            type="submit"
-            className="bg-accent text-ink-950 font-semibold text-sm px-6 py-2.5 rounded-xl active:scale-95 transition"
-          >
-            Save settings
-          </button>
-          {saved && <span className="text-emerald-400 text-sm">Saved ✓</span>}
+      <div className="space-y-4">
+        <div className="rounded-2xl bg-ink-900/70 border border-ink-700/40 p-4 space-y-3">
+          <h2 className="text-sm font-semibold text-ink-100">Cloud Sync</h2>
+          <div className="flex items-center gap-2">
+            <span className={`h-2 w-2 rounded-full ${supabaseConfigured ? "bg-emerald-400" : "bg-amber-400"}`} />
+            <span className="text-sm text-ink-300">
+              {supabaseConfigured ? "Supabase connected via environment" : "Supabase not configured"}
+            </span>
+          </div>
+          {counts && (
+            <div className="grid grid-cols-3 gap-2 mt-2">
+              <Stat label="Total" value={counts.total} />
+              <Stat label="Synced" value={counts.synced} color="text-emerald-400" />
+              <Stat label="Pending" value={counts.pending} color="text-amber-400" />
+            </div>
+          )}
+          {counts && counts.failed > 0 && (
+            <p className="text-xs text-red-400">{counts.failed} entries failed to sync</p>
+          )}
         </div>
-      </form>
 
-      <div className="mt-8 rounded-xl bg-ink-900/50 border border-ink-700/30 p-4">
-        <p className="text-xs text-ink-400">
-          <strong className="text-ink-300">Device ID:</strong> {form.deviceId ?? "—"}
-        </p>
-        <p className="mt-1 text-xs text-ink-500">
-          All data is stored locally on this device first. Cloud sync is opt-in and uses your own Supabase project.
-        </p>
+        <div className="rounded-2xl bg-ink-900/70 border border-ink-700/40 p-4">
+          <h2 className="text-sm font-semibold text-ink-100 mb-2">About</h2>
+          <p className="text-xs text-ink-400">
+            <span className="text-ink-300">Device ID: </span>{deviceId}
+          </p>
+          <p className="mt-2 text-xs text-ink-500">
+            All API keys are configured server-side via environment variables. Data is stored locally in IndexedDB and synced to Supabase automatically when online.
+          </p>
+        </div>
       </div>
     </main>
   );
 }
 
-function Section({ title, description, children }: { title: string; description: string; children: React.ReactNode }) {
+function Stat({ label, value, color = "text-ink-100" }: { label: string; value: number; color?: string }) {
   return (
-    <div className="rounded-2xl bg-ink-900/70 border border-ink-700/40 p-4 space-y-4">
-      <div>
-        <h2 className="text-sm font-semibold text-ink-100">{title}</h2>
-        <p className="text-xs text-ink-400 mt-0.5">{description}</p>
-      </div>
-      {children}
+    <div className="rounded-xl bg-ink-800/60 p-3 text-center">
+      <p className={`text-xl font-semibold tabular-nums ${color}`}>{value}</p>
+      <p className="text-[10px] text-ink-400 uppercase tracking-wider mt-0.5">{label}</p>
     </div>
-  );
-}
-
-function Field({
-  label, type = "text", placeholder, value, onChange, autoComplete,
-}: {
-  label: string; type?: string; placeholder?: string; value: string;
-  onChange: (v: string) => void; autoComplete?: string;
-}) {
-  return (
-    <label className="block space-y-1">
-      <span className="text-xs text-ink-300 uppercase tracking-wider">{label}</span>
-      <input
-        type={type}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder}
-        autoComplete={autoComplete}
-        className="w-full bg-ink-800 border border-ink-700/60 rounded-xl px-3 py-2.5 text-sm text-ink-100 placeholder:text-ink-500 focus:outline-none focus:ring-2 focus:ring-accent/40"
-      />
-    </label>
   );
 }

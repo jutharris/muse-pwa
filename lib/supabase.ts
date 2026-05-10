@@ -10,6 +10,7 @@ let _url = "";
 export function getSupabase(url?: string, anonKey?: string): SupabaseClient | null {
   const finalUrl = url || process.env.NEXT_PUBLIC_SUPABASE_URL || "";
   const finalKey = anonKey || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
+  // No credentials available — running without cloud sync
   if (!finalUrl || !finalKey) return null;
   if (_client && _url === finalUrl && _key === finalKey) return _client;
   _client = createClient(finalUrl, finalKey, {

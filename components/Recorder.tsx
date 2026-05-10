@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { startRecorder, type RecorderHandle, isSpeechSupported, SILENCE_TIMEOUT_MS } from "@/lib/speech";
 import { createEntry } from "@/lib/db";
-import { runFullSync } from "@/lib/sync";
+import { pushEntryNow, runFullSync } from "@/lib/sync";
 import WaveformVisualizer from "./WaveformVisualizer";
 
 interface Props {
@@ -88,7 +88,8 @@ export default function Recorder({ onSaved }: Props) {
       });
       setOpen(false);
       onSaved(entry.id);
-      // Kick off processing + sync; do not await — UI returns immediately.
+      // Push raw entry to Supabase immediately, then process + re-sync.
+      pushEntryNow(entry).catch(() => {});
       runFullSync().catch(() => {});
     } catch (err) {
       setError((err as Error).message);

@@ -29,9 +29,5 @@ export interface Entry {
 
 export interface AppSettings {
   id: "singleton";
-  supabaseUrl?: string;
-  supabaseAnonKey?: string;
-  anthropicApiKey?: string;       // optional override; server env wins by default
-  syncEnabled: boolean;
   deviceId: string;
 }

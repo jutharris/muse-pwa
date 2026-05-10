@@ -31,19 +31,12 @@ export async function getSettings(): Promise<AppSettings> {
   if (existing) return existing;
   const fresh: AppSettings = {
     id: "singleton",
-    syncEnabled: true,
     deviceId: uuidv4(),
   };
   await db().settings.put(fresh);
   return fresh;
 }
 
-export async function saveSettings(patch: Partial<AppSettings>): Promise<AppSettings> {
-  const cur = await getSettings();
-  const next = { ...cur, ...patch, id: "singleton" as const };
-  await db().settings.put(next);
-  return next;
-}
 
 export async function createEntry(input: {
   raw_transcript: string;
