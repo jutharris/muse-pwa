@@ -94,6 +94,7 @@ export default function Recorder({ onSaved }: Props) {
             processing_status: "processed",
             processing_error: undefined,
             sync_status: "pending",
+            raw_audio_blob: undefined,  // discard blob once processed
           });
           pushEntryNow({ ...entry, raw_transcript: finalTranscript, processed, processing_status: "processed", sync_status: "pending" }).catch(() => {});
         } catch (err) {

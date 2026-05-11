@@ -2,30 +2,21 @@
 
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db, deleteEntry, updateEntry } from "@/lib/db";
 import { processAudio, processTranscript } from "@/lib/claude";
 import { pushEntryNow } from "@/lib/sync";
 import CategoryBadge from "@/components/CategoryBadge";
-import AudioPlayer from "@/components/AudioPlayer";
 
 export default function EntryDetailPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
   const entry = useLiveQuery(() => db().entries.get(params.id), [params.id]);
-  const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [tab, setTab] = useState<"clean" | "raw" | "bullets" | "ideas">("clean");
   const [busy, setBusy] = useState(false);
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
-
-  useEffect(() => {
-    if (!entry?.raw_audio_blob) { setAudioUrl(null); return; }
-    const url = URL.createObjectURL(entry.raw_audio_blob);
-    setAudioUrl(url);
-    return () => URL.revokeObjectURL(url);
-  }, [entry?.raw_audio_blob]);
 
   const reprocess = async () => {
     if (!entry) return;
@@ -44,6 +35,7 @@ export default function EntryDetailPage() {
         processed,
         processing_status: "processed",
         processing_error: undefined,
+        raw_audio_blob: undefined,  // discard blob once processed
         sync_status: "pending",
       });
       pushEntryNow({ ...entry, raw_transcript: finalTranscript, processed, processing_status: "processed", sync_status: "pending" }).catch(() => {});
@@ -145,10 +137,6 @@ export default function EntryDetailPage() {
         </div>
       )}
 
-      {audioUrl
-        ? <AudioPlayer src={audioUrl} />
-        : <p className="mt-4 text-xs text-ink-500">Audio recorded on another device — not available here.</p>
-      }
 
       {isProcessed && (
         <>
