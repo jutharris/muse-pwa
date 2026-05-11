@@ -2,13 +2,9 @@ import type { ProcessedEntry } from "./types";
 
 export const SYSTEM_PROMPT = `You are a personal idea processor. Given a raw voice transcript from a person thinking out loud, return a JSON object with these fields: cleaned_transcript (readable version, fix grammar/filler words), bullet_points (array of 3-7 key insights), ideas_and_research (array of follow-up ideas, questions to explore, or things to research), category (one of: business, health, creative, newsletter, life, other), title (5 words or fewer). Return only valid JSON, no markdown.`;
 
-export interface ProcessRequest {
-  transcript: string;
-  apiKey?: string;     // optional override from client settings
-  model?: string;
-}
+export const AUDIO_SYSTEM_PROMPT = `You are a personal idea processor. The user will send you a voice recording of themselves thinking out loud. First transcribe the audio exactly as spoken, then return a JSON object with these fields: raw_transcript (verbatim transcription), cleaned_transcript (readable version, fix grammar/filler words), bullet_points (array of 3-7 key insights), ideas_and_research (array of follow-up ideas, questions to explore, or things to research), category (one of: business, health, creative, newsletter, life, other), title (5 words or fewer). Return only valid JSON, no markdown.`;
 
-export function validateProcessed(obj: unknown): ProcessedEntry {
+export function validateProcessed(obj: unknown): ProcessedEntry & { raw_transcript?: string } {
   if (!obj || typeof obj !== "object") throw new Error("Not an object");
   const o = obj as Record<string, unknown>;
   const cleaned = String(o.cleaned_transcript ?? "").trim();
@@ -18,30 +14,33 @@ export function validateProcessed(obj: unknown): ProcessedEntry {
   const allowed = ["business", "health", "creative", "newsletter", "life", "other"];
   const category = (allowed.includes(cat) ? cat : "other") as ProcessedEntry["category"];
   const title = String(o.title ?? "Untitled").split(/\s+/).slice(0, 7).join(" ").trim() || "Untitled";
+  const raw_transcript = o.raw_transcript ? String(o.raw_transcript).trim() : undefined;
   if (!cleaned) throw new Error("cleaned_transcript missing");
-  return {
-    cleaned_transcript: cleaned,
-    bullet_points: bullets,
-    ideas_and_research: ideas,
-    category,
-    title,
-  };
+  return { cleaned_transcript: cleaned, bullet_points: bullets, ideas_and_research: ideas, category, title, raw_transcript };
 }
 
-// Client helper – calls our /api/process route.
-export async function processTranscript(
-  transcript: string,
-  opts: { apiKey?: string } = {}
-): Promise<ProcessedEntry> {
+// Send text transcript to Claude for processing.
+export async function processTranscript(transcript: string): Promise<ProcessedEntry> {
   const res = await fetch("/api/process", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ transcript, apiKey: opts.apiKey }),
+    body: JSON.stringify({ transcript }),
   });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new Error(`Process failed (${res.status}): ${text || res.statusText}`);
   }
-  const data = await res.json();
-  return validateProcessed(data);
+  return validateProcessed(await res.json());
+}
+
+// Send raw audio blob to Claude for transcription + processing in one shot.
+export async function processAudio(blob: Blob, mimeType: string): Promise<ProcessedEntry & { raw_transcript?: string }> {
+  const form = new FormData();
+  form.append("audio", new File([blob], "recording", { type: mimeType }));
+  const res = await fetch("/api/process", { method: "POST", body: form });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Audio process failed (${res.status}): ${text || res.statusText}`);
+  }
+  return validateProcessed(await res.json());
 }

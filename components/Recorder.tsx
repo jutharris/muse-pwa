@@ -2,8 +2,9 @@
 
 import { useEffect, useRef, useState } from "react";
 import { startRecorder, type RecorderHandle, isSpeechSupported, SILENCE_TIMEOUT_MS } from "@/lib/speech";
-import { createEntry } from "@/lib/db";
-import { pushEntryNow, runFullSync } from "@/lib/sync";
+import { createEntry, updateEntry } from "@/lib/db";
+import { pushEntryNow } from "@/lib/sync";
+import { processAudio, processTranscript } from "@/lib/claude";
 import WaveformVisualizer from "./WaveformVisualizer";
 
 interface Props {
@@ -74,23 +75,55 @@ export default function Recorder({ onSaved }: Props) {
     stopTimer();
     try {
       const result = await handleRef.current.stop();
-      const transcript = (result.transcript || finalText || "").trim();
-      if (!transcript && !result.audioBlob) {
+      const speechTranscript = (result.transcript || finalText || "").trim();
+
+      if (!result.audioBlob && !speechTranscript) {
         setError("Nothing was captured. Check mic permissions and try again.");
         setOpen(false);
         return;
       }
+
+      // Save entry immediately so user sees it in the feed.
       const entry = await createEntry({
-        raw_transcript: transcript,
+        raw_transcript: speechTranscript,
         audio_blob: result.audioBlob,
         audio_mime: result.audioMime,
         audio_duration_ms: result.durationMs,
       });
       setOpen(false);
       onSaved(entry.id);
-      // Push raw entry to Supabase immediately, then process + re-sync.
+
+      // Push raw entry to Supabase, then process via Claude.
       pushEntryNow(entry).catch(() => {});
-      runFullSync().catch(() => {});
+
+      // If we have audio, always use Claude to transcribe + process for best results.
+      // Falls back to text-only processing if no audio blob.
+      (async () => {
+        try {
+          await updateEntry(entry.id, { processing_status: "processing" });
+          let processed: Awaited<ReturnType<typeof processAudio>>;
+          if (result.audioBlob && result.audioMime) {
+            processed = await processAudio(result.audioBlob, result.audioMime);
+          } else {
+            processed = await processTranscript(speechTranscript);
+          }
+          // If Claude returned a raw_transcript (from audio path), use it.
+          const finalTranscript = processed.raw_transcript || speechTranscript;
+          await updateEntry(entry.id, {
+            raw_transcript: finalTranscript,
+            processed,
+            processing_status: "processed",
+            processing_error: undefined,
+            sync_status: "pending",
+          });
+          pushEntryNow({ ...entry, raw_transcript: finalTranscript, processed, processing_status: "processed", sync_status: "pending" }).catch(() => {});
+        } catch (err) {
+          await updateEntry(entry.id, {
+            processing_status: "process_failed",
+            processing_error: (err as Error).message,
+          });
+        }
+      })();
     } catch (err) {
       setError((err as Error).message);
     } finally {
