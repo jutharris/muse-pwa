@@ -123,7 +123,7 @@ export default function Recorder({ onSaved }: Props) {
         onClick={begin}
         aria-label="Record idea"
         className="fixed left-1/2 -translate-x-1/2 z-30 h-20 w-20 rounded-full bg-accent text-ink-950 shadow-[0_10px_30px_-5px_rgba(249,115,115,0.6)] active:scale-95 transition-transform flex items-center justify-center"
-        style={{ bottom: "max(env(safe-area-inset-bottom), 20px) + 20px", bottom: "calc(max(env(safe-area-inset-bottom), 16px) + 16px)" }}
+        style={{ bottom: "calc(max(env(safe-area-inset-bottom), 16px) + 16px)" }}
       >
         <MicIcon />
       </button>
