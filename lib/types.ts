@@ -25,6 +25,7 @@ export interface Entry {
   sync_status: SyncStatus;
   sync_error?: string;
   updated_at: number;
+  hidden?: boolean;
 }
 
 export interface AppSettings {

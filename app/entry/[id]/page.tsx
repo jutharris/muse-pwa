@@ -74,9 +74,17 @@ export default function EntryDetailPage() {
     }
   };
 
+  const toggleHidden = async () => {
+    if (!entry) return;
+    const next = !entry.hidden;
+    await updateEntry(entry.id, { hidden: next, sync_status: "pending" });
+    pushEntryNow({ ...entry, hidden: next, sync_status: "pending" }).catch(() => {});
+    if (next) router.replace("/");
+  };
+
   const remove = async () => {
     if (!entry) return;
-    if (!confirm("Delete this entry? This cannot be undone.")) return;
+    if (!confirm("Permanently delete this entry? This cannot be undone.")) return;
     await deleteEntryAndSync(entry.id);
     router.replace("/");
   };
@@ -110,7 +118,14 @@ export default function EntryDetailPage() {
       <main className="mx-auto max-w-xl px-4 pt-4 pb-24">
         <div className="flex items-center justify-between mb-3">
           <Link href="/" className="text-ink-400 text-sm">← Back</Link>
-          <button onClick={remove} className="text-red-300/80 text-sm">Delete</button>
+          <div className="flex items-center gap-4">
+            {entry.hidden && (
+              <button onClick={remove} className="text-red-300/40 text-xs">Delete</button>
+            )}
+            <button onClick={toggleHidden} className="text-ink-400 text-sm">
+              {entry.hidden ? "Unhide" : "Hide"}
+            </button>
+          </div>
         </div>
 
         <div className="flex items-start justify-between gap-3">

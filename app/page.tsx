@@ -14,6 +14,7 @@ import type { Category } from "@/lib/types";
 export default function HomePage() {
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState<Category | "all">("all");
+  const [showHidden, setShowHidden] = useState(false);
 
   useEffect(() => {
     runFullSync().catch(() => {});
@@ -26,10 +27,10 @@ export default function HomePage() {
     []
   );
 
-  const filtered = useMemo(() => {
-    if (!entries) return [];
+  const { visible, hidden } = useMemo(() => {
+    if (!entries) return { visible: [], hidden: [] };
     const q = query.trim().toLowerCase();
-    return entries.filter((e) => {
+    const matches = (e: (typeof entries)[0]) => {
       if (category !== "all" && e.processed?.category !== category) return false;
       if (!q) return true;
       const haystack = [
@@ -43,7 +44,14 @@ export default function HomePage() {
         .join(" ")
         .toLowerCase();
       return haystack.includes(q);
-    });
+    };
+    const vis: typeof entries = [];
+    const hid: typeof entries = [];
+    for (const e of entries) {
+      if (e.hidden) hid.push(e);
+      else if (matches(e)) vis.push(e);
+    }
+    return { visible: vis, hidden: hid };
   }, [entries, query, category]);
 
   return (
@@ -65,16 +73,39 @@ export default function HomePage() {
 
       <section className="mt-5 space-y-3">
         {entries === undefined && <div className="text-ink-500 text-sm">Loading…</div>}
-        {entries && filtered.length === 0 && (
+        {entries && visible.length === 0 && hidden.length === 0 && (
           <div className="rounded-2xl border border-dashed border-ink-700/50 p-6 text-center text-ink-400 text-sm">
-            {entries.length === 0
-              ? "No ideas yet. Tap the mic to capture your first thought."
-              : "Nothing matches that filter."}
+            No ideas yet. Tap the mic to capture your first thought.
           </div>
         )}
-        {filtered.map((e) => (
+        {entries && visible.length === 0 && hidden.length > 0 && (
+          <div className="rounded-2xl border border-dashed border-ink-700/50 p-6 text-center text-ink-400 text-sm">
+            Nothing matches that filter.
+          </div>
+        )}
+        {visible.map((e) => (
           <EntryCard key={e.id} entry={e} />
         ))}
+
+        {hidden.length > 0 && (
+          <div className="mt-2">
+            <button
+              onClick={() => setShowHidden((s) => !s)}
+              className="w-full flex items-center justify-center gap-2 py-2 text-xs text-ink-500 hover:text-ink-300 transition-colors"
+            >
+              <span>{showHidden ? "▲" : "▼"}</span>
+              {hidden.length} hidden {hidden.length === 1 ? "entry" : "entries"}
+              <span>· {showHidden ? "collapse" : "show"}</span>
+            </button>
+            {showHidden && (
+              <div className="space-y-3 mt-2 opacity-50">
+                {hidden.map((e) => (
+                  <EntryCard key={e.id} entry={e} />
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </section>
 
       <Recorder onSaved={() => { /* live query updates automatically */ }} />
