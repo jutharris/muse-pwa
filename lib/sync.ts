@@ -1,13 +1,14 @@
 "use client";
 
 import {
+  db,
   getSettings,
   listUnprocessed,
   listUnsynced,
   updateEntry,
 } from "./db";
 import { processTranscript } from "./claude";
-import { entryToRow, getSupabase } from "./supabase";
+import { entryToRow, getSupabase, rowToEntry } from "./supabase";
 import type { Entry } from "./types";
 
 let runningProcess = false;
@@ -96,7 +97,46 @@ export async function syncPendingEntries(): Promise<{ synced: number; failed: nu
   return { synced, failed };
 }
 
+// Pull all entries from Supabase into local IndexedDB.
+// Runs on app load so every device sees the full history.
+// Local audio blobs are preserved; remote entries without blobs get sync_status=synced.
+let pulledOnce = false;
+export async function pullFromSupabase(): Promise<void> {
+  if (pulledOnce) return;
+  const supabase = getSupabase();
+  if (!supabase || (typeof navigator !== "undefined" && !navigator.onLine)) return;
+  pulledOnce = true;
+
+  const { data, error } = await supabase
+    .from("entries")
+    .select("*")
+    .order("created_at", { ascending: false });
+
+  if (error || !data) return;
+
+  for (const row of data) {
+    const existing = await db().entries.get(row.id);
+    if (existing) {
+      // Remote is newer — update metadata but keep local audio blob
+      const remoteUpdated = new Date(row.updated_at).getTime();
+      if (remoteUpdated > existing.updated_at) {
+        await db().entries.update(row.id, {
+          raw_transcript: row.raw_transcript ?? existing.raw_transcript,
+          processed: row.processed ?? existing.processed,
+          processing_status: row.processing_status ?? existing.processing_status,
+          updated_at: remoteUpdated,
+          sync_status: "synced",
+        });
+      }
+    } else {
+      // New entry from another device — insert it
+      await db().entries.put(rowToEntry(row));
+    }
+  }
+}
+
 export async function runFullSync(): Promise<void> {
+  await pullFromSupabase();
   await processPendingEntries();
   if (typeof navigator !== "undefined" && navigator.onLine) {
     await syncPendingEntries();

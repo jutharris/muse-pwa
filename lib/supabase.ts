@@ -21,9 +21,6 @@ export function getSupabase(url?: string, anonKey?: string): SupabaseClient | nu
   return _client;
 }
 
-// Map a local Entry to the row shape stored in Supabase.
-// Audio blob is intentionally not synced (size + privacy). If you want audio
-// in cloud, upload to Supabase Storage from sync.ts and store the path here.
 export function entryToRow(entry: Entry, deviceId: string) {
   return {
     id: entry.id,
@@ -34,5 +31,18 @@ export function entryToRow(entry: Entry, deviceId: string) {
     processed: entry.processed ?? null,
     processing_status: entry.processing_status,
     device_id: deviceId,
+  };
+}
+
+// Convert a Supabase row back to a local Entry (no audio blob — not stored in cloud).
+export function rowToEntry(row: Record<string, any>): Entry {
+  return {
+    id: row.id,
+    created_at: new Date(row.created_at).getTime(),
+    updated_at: new Date(row.updated_at).getTime(),
+    raw_transcript: row.raw_transcript ?? "",
+    processed: row.processed ?? undefined,
+    processing_status: row.processing_status ?? "processed",
+    sync_status: "synced",
   };
 }
