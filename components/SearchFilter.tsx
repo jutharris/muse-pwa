@@ -19,10 +19,13 @@ export default function SearchFilter({ query, setQuery, category, setCategory }:
         placeholder="Search transcripts, titles, ideas…"
         className="w-full bg-ink-900 border border-ink-700/40 rounded-xl px-4 py-2.5 text-sm text-ink-100 placeholder:text-ink-500 focus:outline-none focus:ring-2 focus:ring-accent/40"
       />
-      <div className="flex flex-wrap gap-2">
-        <FilterPill active={category === "all"} onClick={() => setCategory("all")}>All</FilterPill>
+      <div className="flex gap-2 overflow-x-auto scrollbar-none">
         {CATEGORIES.map((c) => (
-          <FilterPill key={c} active={category === c} onClick={() => setCategory(c)}>
+          <FilterPill
+            key={c}
+            active={category === c}
+            onClick={() => setCategory(category === c ? "all" : c)}
+          >
             {c}
           </FilterPill>
         ))}
