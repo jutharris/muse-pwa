@@ -4,9 +4,9 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
-import { db, deleteEntry, updateEntry } from "@/lib/db";
+import { db, updateEntry } from "@/lib/db";
 import { processAudio, processTranscript } from "@/lib/claude";
-import { pushEntryNow } from "@/lib/sync";
+import { deleteEntryAndSync, pushEntryNow } from "@/lib/sync";
 import CategoryBadge from "@/components/CategoryBadge";
 import AppendRecorder from "@/components/AppendRecorder";
 
@@ -77,7 +77,7 @@ export default function EntryDetailPage() {
   const remove = async () => {
     if (!entry) return;
     if (!confirm("Delete this entry? This cannot be undone.")) return;
-    await deleteEntry(entry.id);
+    await deleteEntryAndSync(entry.id);
     router.replace("/");
   };
 

@@ -2,6 +2,7 @@
 
 import {
   db,
+  deleteEntry,
   getSettings,
   listUnprocessed,
   listUnsynced,
@@ -52,6 +53,14 @@ export async function processPendingEntries(): Promise<{ processed: number; fail
     runningProcess = false;
   }
   return { processed, failed };
+}
+
+// Delete an entry from both local IndexedDB and Supabase.
+export async function deleteEntryAndSync(id: string): Promise<void> {
+  await deleteEntry(id);
+  const supabase = getSupabase();
+  if (!supabase || !navigator.onLine) return;
+  await supabase.from("entries").delete().eq("id", id);
 }
 
 // Push a single entry to Supabase immediately. Used right after save.
