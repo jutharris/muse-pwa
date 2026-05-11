@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.1",
+    "openai": "^4.67.0",
     "@supabase/supabase-js": "^2.45.4",
     "dexie": "^4.0.8",
     "dexie-react-hooks": "^1.1.7",

@@ -1,32 +1,34 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
-import { SYSTEM_PROMPT, AUDIO_SYSTEM_PROMPT, validateProcessed } from "@/lib/claude";
+import OpenAI from "openai";
+import { SYSTEM_PROMPT, validateProcessed } from "@/lib/claude";
+import { Readable } from "stream";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-// Audio blobs can be several MB
 export const maxDuration = 60;
 
 const DEFAULT_MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-4-20250514";
 
 export async function POST(req: NextRequest) {
-  const contentType = req.headers.get("content-type") || "";
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+  const anthropicKey = process.env.ANTHROPIC_API_KEY;
+  const openaiKey = process.env.OPENAI_API_KEY;
 
-  if (!apiKey) {
-    return NextResponse.json(
-      { error: "No Anthropic API key configured." },
-      { status: 400 }
-    );
+  if (!anthropicKey) {
+    return NextResponse.json({ error: "ANTHROPIC_API_KEY not configured." }, { status: 400 });
   }
 
-  const client = new Anthropic({ apiKey });
-  const model = DEFAULT_MODEL;
+  const contentType = req.headers.get("content-type") || "";
 
-  // ── Audio path ──────────────────────────────────────────────────────────────
-  // Client sends multipart/form-data with an "audio" file field when the
-  // browser Speech API produced no transcript.
+  // ── Audio path: Whisper → transcript → Claude ──────────────────────────────
   if (contentType.includes("multipart/form-data")) {
+    if (!openaiKey) {
+      return NextResponse.json(
+        { error: "OPENAI_API_KEY not configured. Add it to Vercel env vars to enable audio transcription." },
+        { status: 400 }
+      );
+    }
+
     let formData: FormData;
     try {
       formData = await req.formData();
@@ -38,60 +40,49 @@ export async function POST(req: NextRequest) {
     if (!audioFile || audioFile.size === 0) {
       return NextResponse.json({ error: "No audio provided" }, { status: 400 });
     }
-
-    // Enforce a 25 MB cap to keep latency reasonable
     if (audioFile.size > 25 * 1024 * 1024) {
       return NextResponse.json({ error: "Audio too large (max 25 MB)" }, { status: 413 });
     }
 
-    const arrayBuf = await audioFile.arrayBuffer();
-    const base64 = Buffer.from(arrayBuf).toString("base64");
-    const mimeType = (audioFile.type || "audio/webm") as "audio/webm" | "audio/mp4" | "audio/ogg" | "audio/wav" | "audio/mpeg";
-
+    // Step 1: Whisper transcription
+    let rawTranscript: string;
     try {
-      const msg = await client.messages.create({
-        model,
-        max_tokens: 2048,
-        system: AUDIO_SYSTEM_PROMPT,
-        messages: [
-          {
-            role: "user",
-            content: [
-              {
-                type: "text",
-                text: "Here is a voice recording. Please transcribe it and return the JSON as instructed.",
-              },
-              {
-                type: "document",
-                source: {
-                  type: "base64",
-                  media_type: mimeType,
-                  data: base64,
-                },
-              } as any,
-            ],
-          },
-        ],
+      const openai = new OpenAI({ apiKey: openaiKey });
+      const transcription = await openai.audio.transcriptions.create({
+        file: audioFile,
+        model: "whisper-1",
+        response_format: "text",
       });
-
-      const text = msg.content
-        .filter((b: any) => b.type === "text")
-        .map((b: any) => b.text)
-        .join("")
-        .trim();
-
-      const json = extractJson(text);
-      const processed = validateProcessed(json);
-      return NextResponse.json(processed);
+      rawTranscript = (transcription as unknown as string).trim();
     } catch (err: any) {
       return NextResponse.json(
-        { error: err?.message || "Claude audio request failed" },
+        { error: `Transcription failed: ${err?.message || "Whisper error"}` },
         { status: 502 }
       );
     }
+
+    if (!rawTranscript) {
+      return NextResponse.json({ error: "No speech detected in recording." }, { status: 422 });
+    }
+
+    // Step 2: Claude processing
+    try {
+      const anthropic = new Anthropic({ apiKey: anthropicKey });
+      const msg = await anthropic.messages.create({
+        model: DEFAULT_MODEL,
+        max_tokens: 2048,
+        system: SYSTEM_PROMPT,
+        messages: [{ role: "user", content: rawTranscript }],
+      });
+      const text = msg.content.filter((b: any) => b.type === "text").map((b: any) => b.text).join("").trim();
+      const processed = validateProcessed(extractJson(text));
+      return NextResponse.json({ ...processed, raw_transcript: rawTranscript });
+    } catch (err: any) {
+      return NextResponse.json({ error: `Claude processing failed: ${err?.message}` }, { status: 502 });
+    }
   }
 
-  // ── Transcript text path ────────────────────────────────────────────────────
+  // ── Text transcript path ────────────────────────────────────────────────────
   let body: { transcript?: string };
   try {
     body = await req.json();
@@ -105,27 +96,18 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const msg = await client.messages.create({
-      model,
+    const anthropic = new Anthropic({ apiKey: anthropicKey });
+    const msg = await anthropic.messages.create({
+      model: DEFAULT_MODEL,
       max_tokens: 2048,
       system: SYSTEM_PROMPT,
       messages: [{ role: "user", content: transcript }],
     });
-
-    const text = msg.content
-      .filter((b: any) => b.type === "text")
-      .map((b: any) => b.text)
-      .join("")
-      .trim();
-
-    const json = extractJson(text);
-    const processed = validateProcessed(json);
+    const text = msg.content.filter((b: any) => b.type === "text").map((b: any) => b.text).join("").trim();
+    const processed = validateProcessed(extractJson(text));
     return NextResponse.json(processed);
   } catch (err: any) {
-    return NextResponse.json(
-      { error: err?.message || "Claude request failed" },
-      { status: 502 }
-    );
+    return NextResponse.json({ error: err?.message || "Claude request failed" }, { status: 502 });
   }
 }
 
