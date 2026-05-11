@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { startRecorder, type RecorderHandle, isSpeechSupported, SILENCE_TIMEOUT_MS } from "@/lib/speech";
+import { useRef, useState } from "react";
+import { startRecorder, type RecorderHandle, SILENCE_TIMEOUT_MS } from "@/lib/speech";
 import { createEntry, updateEntry } from "@/lib/db";
 import { pushEntryNow } from "@/lib/sync";
 import { processAudio, processTranscript } from "@/lib/claude";
@@ -14,20 +14,13 @@ interface Props {
 export default function Recorder({ onSaved }: Props) {
   const [open, setOpen] = useState(false);
   const [recording, setRecording] = useState(false);
-  const [interim, setInterim] = useState("");
-  const [finalText, setFinalText] = useState("");
   const [level, setLevel] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [warn, setWarn] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState(0);
-  const [supported, setSupported] = useState(true);
   const handleRef = useRef<RecorderHandle | null>(null);
   const startedAt = useRef<number>(0);
   const tickRef = useRef<number | null>(null);
-
-  useEffect(() => {
-    setSupported(isSpeechSupported());
-  }, []);
 
   const startTimer = () => {
     startedAt.current = Date.now();
@@ -43,20 +36,15 @@ export default function Recorder({ onSaved }: Props) {
   const begin = async () => {
     setError(null);
     setWarn(null);
-    setInterim("");
-    setFinalText("");
     setOpen(true);
     try {
+      // Pass no speech callbacks — we use Claude for transcription on all browsers.
+      // onLevel drives the waveform only.
       const handle = await startRecorder({
-        onInterim: (i, f) => {
-          setInterim(i);
-          setFinalText(f);
-        },
         onLevel: setLevel,
-        onError: (m) => setError(m),
         onAutoStopWarning: (msSince) => {
           const left = Math.max(0, Math.ceil((SILENCE_TIMEOUT_MS - msSince) / 1000));
-          setWarn(`Stopping in ${left}s of silence — speak to keep going.`);
+          setWarn(`Auto-stopping in ${left}s of silence`);
         },
       });
       handleRef.current = handle;
@@ -70,45 +58,36 @@ export default function Recorder({ onSaved }: Props) {
   };
 
   const stop = async () => {
-    if (!handleRef.current) return;
+    if (!handleRef.current || !recording) return;
     setRecording(false);
     stopTimer();
-    try {
-      const result = await handleRef.current.stop();
-      const speechTranscript = (result.transcript || finalText || "").trim();
+    const handle = handleRef.current;
+    handleRef.current = null;
 
-      if (!result.audioBlob && !speechTranscript) {
-        setError("Nothing was captured. Check mic permissions and try again.");
+    try {
+      const result = await handle.stop();
+
+      if (!result.audioBlob) {
+        setError("Nothing captured — check mic permissions and try again.");
         setOpen(false);
         return;
       }
 
-      // Save entry immediately so user sees it in the feed.
       const entry = await createEntry({
-        raw_transcript: speechTranscript,
+        raw_transcript: "",
         audio_blob: result.audioBlob,
         audio_mime: result.audioMime,
         audio_duration_ms: result.durationMs,
       });
       setOpen(false);
       onSaved(entry.id);
-
-      // Push raw entry to Supabase, then process via Claude.
       pushEntryNow(entry).catch(() => {});
 
-      // If we have audio, always use Claude to transcribe + process for best results.
-      // Falls back to text-only processing if no audio blob.
       (async () => {
         try {
           await updateEntry(entry.id, { processing_status: "processing" });
-          let processed: Awaited<ReturnType<typeof processAudio>>;
-          if (result.audioBlob && result.audioMime) {
-            processed = await processAudio(result.audioBlob, result.audioMime);
-          } else {
-            processed = await processTranscript(speechTranscript);
-          }
-          // If Claude returned a raw_transcript (from audio path), use it.
-          const finalTranscript = processed.raw_transcript || speechTranscript;
+          const processed = await processAudio(result.audioBlob!, result.audioMime || "audio/webm");
+          const finalTranscript = processed.raw_transcript || "";
           await updateEntry(entry.id, {
             raw_transcript: finalTranscript,
             processed,
@@ -126,8 +105,6 @@ export default function Recorder({ onSaved }: Props) {
       })();
     } catch (err) {
       setError((err as Error).message);
-    } finally {
-      handleRef.current = null;
     }
   };
 
@@ -141,75 +118,67 @@ export default function Recorder({ onSaved }: Props) {
 
   return (
     <>
+      {/* Floating mic button */}
       <button
         onClick={begin}
         aria-label="Record idea"
-        className="fixed bottom-6 left-1/2 -translate-x-1/2 z-30 h-20 w-20 rounded-full bg-accent text-ink-950 font-semibold shadow-[0_10px_30px_-5px_rgba(249,115,115,0.6)] active:scale-95 transition flex items-center justify-center"
-        style={{ bottom: "calc(env(safe-area-inset-bottom) + 1.25rem)" }}
+        className="fixed left-1/2 -translate-x-1/2 z-30 h-20 w-20 rounded-full bg-accent text-ink-950 shadow-[0_10px_30px_-5px_rgba(249,115,115,0.6)] active:scale-95 transition-transform flex items-center justify-center"
+        style={{ bottom: "max(env(safe-area-inset-bottom), 20px) + 20px", bottom: "calc(max(env(safe-area-inset-bottom), 16px) + 16px)" }}
       >
         <MicIcon />
       </button>
 
       {open && (
-        <div className="fixed inset-0 z-40 bg-ink-950/95 backdrop-blur-md flex flex-col">
-          <header className="flex items-center justify-between p-4">
-            <button onClick={cancel} className="text-ink-400 text-sm">Cancel</button>
-            <div className="text-xs text-ink-400 tabular-nums">{formatTime(elapsed)}</div>
-            <div className="w-12" />
-          </header>
+        <div className="fixed inset-0 z-40 bg-ink-950 flex flex-col" style={{ paddingBottom: "max(env(safe-area-inset-bottom), 16px)" }}>
+          {/* Header */}
+          <div className="flex items-center justify-between px-5 pt-4 pb-2 flex-shrink-0"
+               style={{ paddingTop: "max(env(safe-area-inset-top), 16px)" }}>
+            <button
+              onPointerDown={cancel}
+              className="text-ink-400 text-sm py-2 pr-4"
+            >
+              Cancel
+            </button>
+            <span className="text-sm font-mono text-ink-300">{formatTime(elapsed)}</span>
+            <div className="w-16" />
+          </div>
 
-          <div className="flex-1 flex flex-col px-5 pb-6 overflow-hidden">
-            {!supported && (
-              <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 p-3 text-xs text-amber-200 mb-3 leading-relaxed">
-                <strong>Safari / iOS:</strong> Live transcription isn't supported here. Your audio will still be recorded — you can type the transcript manually afterward to trigger Claude processing.
-              </div>
-            )}
-
-            <div className="rounded-2xl bg-ink-900/70 border border-ink-700/40 p-4">
-              <WaveformVisualizer level={level} active={recording} />
-              <div className="mt-3 flex items-center gap-2">
-                <span className="relative flex h-2.5 w-2.5">
-                  {recording && <span className="animate-ping-slow absolute inset-0 rounded-full bg-accent opacity-70" />}
-                  <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${recording ? "bg-accent" : "bg-ink-500"}`} />
-                </span>
-                <span className="text-xs text-ink-400">
-                  {recording ? "Listening — natural pauses are fine" : "Paused"}
-                </span>
-              </div>
+          {/* Waveform */}
+          <div className="mx-5 rounded-2xl bg-ink-900/70 border border-ink-700/40 p-4 flex-shrink-0">
+            <WaveformVisualizer level={level} active={recording} height={80} />
+            <div className="mt-2 flex items-center gap-2">
+              <span className="relative flex h-2 w-2">
+                {recording && <span className="animate-ping absolute inset-0 rounded-full bg-accent opacity-60" />}
+                <span className={`relative rounded-full h-2 w-2 ${recording ? "bg-accent" : "bg-ink-600"}`} />
+              </span>
+              <span className="text-xs text-ink-400">
+                {recording ? "Recording — natural pauses are fine" : "Starting…"}
+              </span>
             </div>
+          </div>
 
-            <div className="flex-1 mt-4 overflow-y-auto rounded-2xl bg-ink-900/50 border border-ink-700/30 p-4 scrollbar-none">
-              <p className="text-ink-100 text-base leading-relaxed whitespace-pre-wrap">
-                {finalText}
-                {interim && (
-                  <span className="text-ink-400">{(finalText ? " " : "") + interim}</span>
-                )}
-                {!finalText && !interim && (
-                  <span className="text-ink-500">Start talking — your words will appear here.</span>
-                )}
-              </p>
-            </div>
-
-            {warn && (
-              <div className="mt-3 text-xs text-amber-300/90">{warn}</div>
-            )}
-            {error && (
-              <div className="mt-3 text-xs text-red-300">{error}</div>
-            )}
-
-            <div className="mt-5 flex items-center justify-center">
-              <button
-                onClick={stop}
-                disabled={!recording}
-                className="h-16 w-16 rounded-full bg-accent text-ink-950 font-semibold shadow-[0_10px_30px_-5px_rgba(249,115,115,0.6)] active:scale-95 transition flex items-center justify-center disabled:opacity-40"
-                aria-label="Stop recording"
-              >
-                <StopIcon />
-              </button>
-            </div>
-            <p className="mt-3 text-center text-[11px] text-ink-500">
-              Tap Stop when you're done. Auto-stops after 90s of true silence.
+          {/* Status messages */}
+          <div className="mx-5 mt-3 flex-shrink-0 space-y-2">
+            <p className="text-xs text-ink-500 text-center">
+              Claude will transcribe and process your recording when you stop.
             </p>
+            {warn && <p className="text-xs text-amber-300/90 text-center">{warn}</p>}
+            {error && <p className="text-xs text-red-300 text-center">{error}</p>}
+          </div>
+
+          {/* Spacer */}
+          <div className="flex-1" />
+
+          {/* Stop button — large tap target, well above home indicator */}
+          <div className="flex flex-col items-center gap-3 px-5 pb-6 flex-shrink-0">
+            <button
+              onPointerDown={stop}
+              className="h-20 w-20 rounded-full bg-accent text-ink-950 shadow-[0_10px_40px_-5px_rgba(249,115,115,0.7)] active:scale-95 transition-transform flex items-center justify-center"
+              aria-label="Stop recording"
+            >
+              <StopIcon />
+            </button>
+            <p className="text-[11px] text-ink-500">Tap to stop · auto-stops after 90s silence</p>
           </div>
         </div>
       )}
@@ -219,7 +188,7 @@ export default function Recorder({ onSaved }: Props) {
 
 function MicIcon() {
   return (
-    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <rect x="9" y="2" width="6" height="12" rx="3" />
       <path d="M5 10v2a7 7 0 0 0 14 0v-2" />
       <line x1="12" y1="19" x2="12" y2="22" />
@@ -229,8 +198,8 @@ function MicIcon() {
 
 function StopIcon() {
   return (
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
-      <rect x="6" y="6" width="12" height="12" rx="2" />
+    <svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor">
+      <rect x="5" y="5" width="14" height="14" rx="2" />
     </svg>
   );
 }
@@ -238,6 +207,5 @@ function StopIcon() {
 function formatTime(ms: number): string {
   const s = Math.floor(ms / 1000);
   const m = Math.floor(s / 60);
-  const r = s % 60;
-  return `${m}:${r.toString().padStart(2, "0")}`;
+  return `${m}:${(s % 60).toString().padStart(2, "0")}`;
 }

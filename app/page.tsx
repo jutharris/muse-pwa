@@ -47,7 +47,7 @@ export default function HomePage() {
   }, [entries, query, category]);
 
   return (
-    <main className="mx-auto max-w-xl px-4 pt-6 pb-32">
+    <main className="mx-auto max-w-xl px-4 pt-6" style={{ paddingBottom: "calc(max(env(safe-area-inset-bottom), 16px) + 120px)" }}>
       <header className="flex items-center justify-between mb-4">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Muse</h1>
