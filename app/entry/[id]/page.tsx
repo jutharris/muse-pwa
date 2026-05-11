@@ -17,6 +17,8 @@ export default function EntryDetailPage() {
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [tab, setTab] = useState<"clean" | "raw" | "bullets" | "ideas">("clean");
   const [busy, setBusy] = useState(false);
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState("");
 
   useEffect(() => {
     if (!entry?.raw_audio_blob) { setAudioUrl(null); return; }
@@ -83,9 +85,35 @@ export default function EntryDetailPage() {
       </div>
 
       <div className="flex items-start justify-between gap-3">
-        <h1 className="text-xl font-semibold leading-tight">
-          {entry.processed?.title || (entry.processing_status === "processing" ? "Processing…" : "Untitled")}
-        </h1>
+        {editingTitle ? (
+          <input
+            autoFocus
+            value={titleDraft}
+            onChange={(e) => setTitleDraft(e.target.value)}
+            onBlur={async () => {
+              const t = titleDraft.trim();
+              if (t && entry.processed) {
+                await updateEntry(entry.id, { processed: { ...entry.processed, title: t }, sync_status: "pending" });
+                pushEntryNow({ ...entry, processed: { ...entry.processed, title: t }, sync_status: "pending" }).catch(() => {});
+              }
+              setEditingTitle(false);
+            }}
+            onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") setEditingTitle(false); }}
+            className="flex-1 text-xl font-semibold bg-transparent border-b border-accent focus:outline-none text-ink-100 pb-0.5"
+          />
+        ) : (
+          <h1
+            className="text-xl font-semibold leading-tight cursor-text"
+            onClick={() => {
+              if (!entry.processed) return;
+              setTitleDraft(entry.processed.title);
+              setEditingTitle(true);
+            }}
+            title="Tap to edit title"
+          >
+            {entry.processed?.title || (entry.processing_status === "processing" ? "Processing…" : "Untitled")}
+          </h1>
+        )}
         {entry.processed?.category && <CategoryBadge category={entry.processed.category} />}
       </div>
       <p className="mt-1 text-xs text-ink-400">
