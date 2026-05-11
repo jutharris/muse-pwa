@@ -127,8 +127,8 @@ export default function Recorder({ onSaved }: Props) {
 
           <div className="flex-1 flex flex-col px-5 pb-6 overflow-hidden">
             {!supported && (
-              <div className="rounded-lg bg-ink-800 p-3 text-xs text-ink-300 mb-3">
-                This browser doesn't support live transcription. Audio is being recorded; transcript will be empty.
+              <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 p-3 text-xs text-amber-200 mb-3 leading-relaxed">
+                <strong>Safari / iOS:</strong> Live transcription isn't supported here. Your audio will still be recorded — you can type the transcript manually afterward to trigger Claude processing.
               </div>
             )}
 

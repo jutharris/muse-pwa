@@ -4,9 +4,10 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
-import { db, deleteEntry } from "@/lib/db";
+import { db, deleteEntry, updateEntry } from "@/lib/db";
 import { processPendingEntries, syncPendingEntries } from "@/lib/sync";
 import CategoryBadge from "@/components/CategoryBadge";
+import AudioPlayer from "@/components/AudioPlayer";
 
 export default function EntryDetailPage() {
   const params = useParams<{ id: string }>();
@@ -15,6 +16,8 @@ export default function EntryDetailPage() {
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [tab, setTab] = useState<"clean" | "raw" | "bullets" | "ideas">("clean");
   const [busy, setBusy] = useState(false);
+  const [manualTranscript, setManualTranscript] = useState("");
+  const [editingTranscript, setEditingTranscript] = useState(false);
 
   useEffect(() => {
     if (!entry?.raw_audio_blob) {
@@ -27,12 +30,33 @@ export default function EntryDetailPage() {
   }, [entry?.raw_audio_blob]);
 
   const isProcessed = entry?.processing_status === "processed";
+  const hasEmptyTranscript =
+    entry?.processing_status === "process_failed" &&
+    entry?.processing_error === "Empty transcript";
 
   const reprocess = async () => {
     if (!entry) return;
     setBusy(true);
     try {
       await db().entries.update(entry.id, { processing_status: "unprocessed", processing_error: undefined });
+      await processPendingEntries();
+      await syncPendingEntries();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveManualTranscript = async () => {
+    if (!entry || !manualTranscript.trim()) return;
+    setBusy(true);
+    try {
+      await updateEntry(entry.id, {
+        raw_transcript: manualTranscript.trim(),
+        processing_status: "unprocessed",
+        processing_error: undefined,
+      });
+      setEditingTranscript(false);
+      setManualTranscript("");
       await processPendingEntries();
       await syncPendingEntries();
     } finally {
@@ -58,9 +82,7 @@ export default function EntryDetailPage() {
   );
 
   if (entry === undefined) {
-    return (
-      <main className="mx-auto max-w-xl px-4 pt-6 pb-12 text-ink-400 text-sm">Loading…</main>
-    );
+    return <main className="mx-auto max-w-xl px-4 pt-6 pb-12 text-ink-400 text-sm">Loading…</main>;
   }
   if (entry === null) {
     return (
@@ -88,7 +110,8 @@ export default function EntryDetailPage() {
         {entry.raw_audio_duration_ms ? ` · ${Math.round(entry.raw_audio_duration_ms / 1000)}s` : ""}
       </p>
 
-      {entry.processing_status !== "processed" && (
+      {/* Processing status banner */}
+      {entry.processing_status !== "processed" && !hasEmptyTranscript && (
         <div className="mt-3 rounded-xl border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-200 flex items-center justify-between">
           <span>
             {entry.processing_status === "processing"
@@ -103,66 +126,111 @@ export default function EntryDetailPage() {
         </div>
       )}
 
-      {audioUrl && (
-        <audio controls src={audioUrl} className="mt-4 w-full" preload="metadata" />
+      {/* Empty transcript — browser doesn't support Speech API */}
+      {hasEmptyTranscript && (
+        <div className="mt-3 rounded-xl border border-ink-700/40 bg-ink-900/60 px-4 py-3 space-y-3">
+          <p className="text-xs text-ink-300 leading-relaxed">
+            <span className="text-amber-300 font-medium">No transcript captured.</span> Safari and iOS don't support live speech-to-text. Your audio is saved — type what you said below and Claude will process it.
+          </p>
+          {!editingTranscript ? (
+            <button
+              onClick={() => setEditingTranscript(true)}
+              className="text-xs bg-accent text-ink-950 font-semibold px-4 py-1.5 rounded-lg active:scale-95 transition"
+            >
+              Type transcript
+            </button>
+          ) : (
+            <div className="space-y-2">
+              <textarea
+                value={manualTranscript}
+                onChange={(e) => setManualTranscript(e.target.value)}
+                placeholder="Type or paste what you said…"
+                rows={5}
+                className="w-full bg-ink-800 border border-ink-700/60 rounded-xl px-3 py-2.5 text-sm text-ink-100 placeholder:text-ink-500 focus:outline-none focus:ring-2 focus:ring-accent/40 resize-none"
+                autoFocus
+              />
+              <div className="flex gap-2">
+                <button
+                  onClick={saveManualTranscript}
+                  disabled={busy || !manualTranscript.trim()}
+                  className="text-xs bg-accent text-ink-950 font-semibold px-4 py-1.5 rounded-lg disabled:opacity-40 active:scale-95 transition"
+                >
+                  {busy ? "Processing…" : "Process with Claude"}
+                </button>
+                <button
+                  onClick={() => setEditingTranscript(false)}
+                  className="text-xs text-ink-400 px-3 py-1.5"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
       )}
 
-      <div className="mt-5 flex gap-2 overflow-x-auto scrollbar-none -mx-4 px-4">
-        {tabs.map((t) => (
-          <button
-            key={t.id}
-            onClick={() => setTab(t.id)}
-            className={`whitespace-nowrap text-xs uppercase tracking-wider px-3 py-1.5 rounded-full border transition ${
-              tab === t.id
-                ? "bg-accent text-ink-950 border-accent"
-                : "bg-ink-900 text-ink-400 border-ink-700/40"
-            }`}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
+      {audioUrl && <AudioPlayer src={audioUrl} />}
 
-      <section className="mt-4 rounded-2xl bg-ink-900/70 border border-ink-700/40 p-4 text-[15px] leading-relaxed">
-        {tab === "clean" && (
-          <p className="whitespace-pre-wrap text-ink-100">
-            {entry.processed?.cleaned_transcript || (isProcessed ? "(empty)" : entry.raw_transcript || "(empty)")}
-          </p>
-        )}
-        {tab === "raw" && (
-          <p className="whitespace-pre-wrap text-ink-200">
-            {entry.raw_transcript || "(empty)"}
-          </p>
-        )}
-        {tab === "bullets" && (
-          (entry.processed?.bullet_points?.length ?? 0) === 0 ? (
-            <p className="text-ink-400 text-sm">No bullet points yet.</p>
-          ) : (
-            <ul className="space-y-2">
-              {entry.processed!.bullet_points.map((b, i) => (
-                <li key={i} className="flex gap-3">
-                  <span className="text-accent mt-2 inline-block h-1.5 w-1.5 rounded-full flex-shrink-0" />
-                  <span>{b}</span>
-                </li>
-              ))}
-            </ul>
-          )
-        )}
-        {tab === "ideas" && (
-          (entry.processed?.ideas_and_research?.length ?? 0) === 0 ? (
-            <p className="text-ink-400 text-sm">No follow-up ideas yet.</p>
-          ) : (
-            <ul className="space-y-2">
-              {entry.processed!.ideas_and_research.map((b, i) => (
-                <li key={i} className="flex gap-3">
-                  <span className="text-accent/80 mt-2 inline-block h-1.5 w-1.5 rounded-full flex-shrink-0" />
-                  <span>{b}</span>
-                </li>
-              ))}
-            </ul>
-          )
-        )}
-      </section>
+      {isProcessed && (
+        <>
+          <div className="mt-5 flex gap-2 overflow-x-auto scrollbar-none -mx-4 px-4">
+            {tabs.map((t) => (
+              <button
+                key={t.id}
+                onClick={() => setTab(t.id)}
+                className={`whitespace-nowrap text-xs uppercase tracking-wider px-3 py-1.5 rounded-full border transition ${
+                  tab === t.id
+                    ? "bg-accent text-ink-950 border-accent"
+                    : "bg-ink-900 text-ink-400 border-ink-700/40"
+                }`}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+
+          <section className="mt-4 rounded-2xl bg-ink-900/70 border border-ink-700/40 p-4 text-[15px] leading-relaxed">
+            {tab === "clean" && (
+              <p className="whitespace-pre-wrap text-ink-100">
+                {entry.processed?.cleaned_transcript || "(empty)"}
+              </p>
+            )}
+            {tab === "raw" && (
+              <p className="whitespace-pre-wrap text-ink-200">
+                {entry.raw_transcript || "(empty)"}
+              </p>
+            )}
+            {tab === "bullets" && (
+              (entry.processed?.bullet_points?.length ?? 0) === 0 ? (
+                <p className="text-ink-400 text-sm">No bullet points.</p>
+              ) : (
+                <ul className="space-y-2">
+                  {entry.processed!.bullet_points.map((b, i) => (
+                    <li key={i} className="flex gap-3">
+                      <span className="text-accent mt-2 inline-block h-1.5 w-1.5 rounded-full flex-shrink-0" />
+                      <span>{b}</span>
+                    </li>
+                  ))}
+                </ul>
+              )
+            )}
+            {tab === "ideas" && (
+              (entry.processed?.ideas_and_research?.length ?? 0) === 0 ? (
+                <p className="text-ink-400 text-sm">No follow-up ideas.</p>
+              ) : (
+                <ul className="space-y-2">
+                  {entry.processed!.ideas_and_research.map((b, i) => (
+                    <li key={i} className="flex gap-3">
+                      <span className="text-accent/80 mt-2 inline-block h-1.5 w-1.5 rounded-full flex-shrink-0" />
+                      <span>{b}</span>
+                    </li>
+                  ))}
+                </ul>
+              )
+            )}
+          </section>
+        </>
+      )}
     </main>
   );
 }
