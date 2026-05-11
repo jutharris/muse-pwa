@@ -145,7 +145,10 @@ export default function EntryDetailPage() {
         </div>
       )}
 
-      {audioUrl && <AudioPlayer src={audioUrl} />}
+      {audioUrl
+        ? <AudioPlayer src={audioUrl} />
+        : <p className="mt-4 text-xs text-ink-500">Audio recorded on another device — not available here.</p>
+      }
 
       {isProcessed && (
         <>
