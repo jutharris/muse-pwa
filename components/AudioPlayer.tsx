@@ -62,9 +62,10 @@ export default function AudioPlayer({ src }: { src: string }) {
 
   return (
     <div className="mt-4 flex items-center gap-3 rounded-2xl bg-ink-900/70 border border-ink-700/40 px-4 py-3">
-      <audio ref={audioRef} src={src} preload="metadata" className="hidden" />
+      {/* position:absolute keeps it out of layout while allowing iOS audio session init */}
+      <audio ref={audioRef} src={src} preload="auto" style={{ position: "absolute", width: 0, height: 0, opacity: 0 }} playsInline />
       <button
-        onClick={togglePlay}
+        onPointerDown={(e) => { e.preventDefault(); togglePlay(); }}
         className="h-9 w-9 rounded-full bg-accent text-ink-950 flex items-center justify-center flex-shrink-0 active:scale-95 transition"
         aria-label={playing ? "Pause" : "Play"}
       >

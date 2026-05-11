@@ -19,14 +19,24 @@ export function validateProcessed(obj: unknown): ProcessedEntry & { raw_transcri
 
 // Send audio blob to server — Whisper transcribes, Claude processes.
 export async function processAudio(blob: Blob, mimeType: string): Promise<ProcessedEntry & { raw_transcript?: string }> {
+  const ext = mimeToExt(mimeType);
   const form = new FormData();
-  form.append("audio", new File([blob], "recording", { type: mimeType }));
+  form.append("audio", new File([blob], `recording.${ext}`, { type: mimeType }));
   const res = await fetch("/api/process", { method: "POST", body: form });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new Error(`Audio process failed (${res.status}): ${text || res.statusText}`);
   }
   return validateProcessed(await res.json());
+}
+
+function mimeToExt(mime: string): string {
+  if (mime.includes("mp4") || mime.includes("m4a")) return "mp4";
+  if (mime.includes("ogg")) return "ogg";
+  if (mime.includes("wav")) return "wav";
+  if (mime.includes("mpeg") || mime.includes("mp3")) return "mp3";
+  if (mime.includes("flac")) return "flac";
+  return "webm"; // default — Chrome/Android
 }
 
 // Send a plain text transcript to Claude for processing.
